@@ -1,0 +1,12 @@
+{
+  "Parameters": {
+    "PipelineName": "sagemaker-pipeline-abalone",
+    "MaxParallelExecutionSteps": 99,
+    "ProcessingInstanceCount": "1",
+    "TrainingInstanceCount": "1",
+    "ModelApprovalStatus": "Approved",
+    "MseThreshold": "6.0",
+    "mlops_bucket": "mlops-<Region>-<AccountId>",
+    "data_bucket": "data-<Region>-<AccountId>"
+  }
+}

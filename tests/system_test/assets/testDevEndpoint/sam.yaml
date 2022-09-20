@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Template to deploy Lambda container for endpoint testing
+
+Resources:
+  TestDevEndpoint:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: 
+        Fn::Join:
+          - "-"
+          - - Fn::ImportValue: MLOpsPipelineName
+            - "test-dev-endpoint" 
+            - Fn::ImportValue: ModelName
+      PackageType: Image
+      Role: !ImportValue MLOpsRoleNameArn
+      MemorySize: 512
+      Timeout: 120
+      Environment:
+        Variables:
+          PIPELINE_NAME: !ImportValue MLOpsPipelineName
+          PIPELINE_BUCKET: !ImportValue MLOpsBucket
+          ENDPOINT: 
+            Fn::Join:
+              - "-"
+              - - Fn::ImportValue: MLOpsPipelineName
+                - "dev"
+          TEST_DATA: "input/testing/test.csv"
+      CodeUri: testDevEndpoint/
+      Tags:
+        Name: !ImportValue MLOpsPipelineName
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ./testDevEndpoint
+      DockerTag: python3.8

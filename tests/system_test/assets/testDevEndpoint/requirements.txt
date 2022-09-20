@@ -1,0 +1,6 @@
+boto3
+wheel
+numpy
+pandas
+scikit-learn
+scipy

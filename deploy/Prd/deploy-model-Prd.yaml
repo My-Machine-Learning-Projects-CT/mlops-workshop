@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Deploy a model to Sagemaker for Production Hosting
+
+Parameters:
+
+  ModelName:
+    Type: String
+    Description: Name of the model.
+
+  ModelPackageName:
+    Type: String
+    Description: Model Package Version that is being deployed
+
+  EndpointInstanceCount:
+    Type: Number
+    Description: Number of instances to launch for the endpoint.
+
+  EndpointInstanceType:
+    Type: String
+    Description: The ML compute instance type for the endpoint.
+  
+  EndpointMaxCapacity:
+    Type: Number
+    Description: Maximum number of instances to autoscale the endpoint.
+  
+  ScalingTarget:
+    Type: Number
+    Description: Target number of Invocations per Instance.
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AccountId: "156813124566"
+    us-east-2:
+      AccountId: "777275614652"
+    us-west-1:
+      AccountId: "890145073186"
+    us-west-2:
+      AccountId: "159807026194"
+    af-south-1:
+      AccountId: "875698925577"
+    ap-east-1:
+      AccountId: "001633400207"
+    ap-northeast-1:
+      AccountId: "574779866223"
+    ap-northeast-2:
+      AccountId: "709848358524"
+    ap-northeast-3:
+      AccountId: "990339680094"
+    ap-south-1:
+      AccountId: "126357580389"
+    ap-southeast-1:
+      AccountId: "245545462676"
+    ap-southeast-2:
+      AccountId: "563025443158"
+    ca-central-1:
+      AccountId: "536280801234"
+    cn-north-1:
+      AccountId: "453000072557"
+    cn-northwest-1:
+      AccountId: "453252182341"
+    eu-central-1:
+      AccountId: "48819808253"
+    eu-north-1:
+      AccountId: "895015795356"
+    eu-south-1:
+      AccountId: "933208885752"
+    eu-west-1:
+      AccountId: "468650794304"
+    eu-west-2:
+      AccountId: "749857270468"
+    eu-west-3:
+      AccountId: "680080141114"
+    me-south-1:
+      AccountId: "607024016150"
+    sa-east-1:
+      AccountId: "539772159869"
+    us-gov-west-1:
+      AccountId: "362178532790"
+      
+Resources:
+
+  Model:
+    Type: AWS::SageMaker::Model
+    Properties:
+      PrimaryContainer:
+        ModelPackageName: !Ref ModelPackageName
+      ExecutionRoleArn: !ImportValue MLOpsDeployRole
+      
+  EndpointConfig:
+    Type: AWS::SageMaker::EndpointConfig
+    Properties:
+      DataCaptureConfig:
+        CaptureContentTypeHeader:
+          CsvContentTypes:
+            - "text/csv"
+        CaptureOptions:
+          - CaptureMode: Input
+          - CaptureMode: Output
+        DestinationS3Uri: 
+          Fn::Join:
+            - ""
+            - - "s3://"
+              - Fn::ImportValue: DataBucket
+              - "/datacapture/Prd"
+        EnableCapture: True
+        InitialSamplingPercentage: 100
+      ProductionVariants:
+      - InitialInstanceCount: !Ref EndpointInstanceCount
+        InitialVariantWeight: 1.0
+        InstanceType: !Ref EndpointInstanceType
+        ModelName: !GetAtt Model.ModelName
+        VariantName: AllTraffic
+
+  Endpoint:
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName:
+        Fn::Join:
+          - "-"
+          - - Fn::ImportValue: MLOpsPipelineName
+            - "prd" 
+      EndpointConfigName: !GetAtt EndpointConfig.EndpointConfigName
+    DependsOn: EndpointConfig
+ 
+  MonitoringSchedule:
+    Type: AWS::SageMaker::MonitoringSchedule
+    Properties:
+      MonitoringScheduleConfig:
+        MonitoringJobDefinition:
+          MonitoringAppSpecification:
+            ImageUri: !Sub 
+            - "${AccountID}.dkr.ecr.${AWS::Region}.amazonaws.com/sagemaker-model-monitor-analyzer:latest"
+            - {AccountID: !FindInMap [ RegionMap, !Ref "AWS::Region", AccountId ]}
+          MonitoringInputs:
+            - EndpointInput:
+                EndpointName: !GetAtt Endpoint.EndpointName
+                LocalPath: "/opt/ml/processing/endpointdata"
+          MonitoringOutputConfig:
+            MonitoringOutputs:
+              - S3Output:
+                  LocalPath: "/opt/ml/processing/localpath"
+                  S3Uri:
+                    Fn::Join:
+                      - ""
+                      - - "s3://"
+                        - Fn::ImportValue: DataBucket
+                        - "/reports/Prd"
+          MonitoringResources:
+            ClusterConfig:
+              InstanceCount: 1
+              InstanceType: ml.m5.large
+              VolumeSizeInGB: 50
+          RoleArn: !ImportValue MLOpsDeployRole
+        ScheduleConfig:
+          ScheduleExpression: cron(0 * ? * * *)
+      MonitoringScheduleName: !Sub ${ModelName}-Prd-MonitoringSchedule
+
+  AutoScaling:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: !Ref EndpointMaxCapacity
+      MinCapacity: !Ref EndpointInstanceCount
+      ResourceId: !Sub endpoint/${Endpoint.EndpointName}/variant/AllTraffic
+      RoleARN: !ImportValue MLOpsDeployRole
+      ScalableDimension: sagemaker:variant:DesiredInstanceCount
+      ServiceNamespace: sagemaker
+    DependsOn: Endpoint
+
+  AutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties: 
+      PolicyName: SageMakerVariantInvocationsPerInstance
+      PolicyType: TargetTrackingScaling
+      ResourceId: !Sub endpoint/${Endpoint.EndpointName}/variant/AllTraffic
+      ScalableDimension: sagemaker:variant:DesiredInstanceCount
+      ServiceNamespace: sagemaker
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: !Ref ScalingTarget
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: SageMakerVariantInvocationsPerInstance
+    DependsOn: AutoScaling
+    
+Outputs:
+  PrdEndpointName:
+    Description: "Endpoint Name"
+    Value: !GetAtt Endpoint.EndpointName

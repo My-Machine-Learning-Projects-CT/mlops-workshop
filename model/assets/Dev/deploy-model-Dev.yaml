@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Deploy a model to Sagemaker for Dev/QA Testing
+
+Parameters:
+
+  ModelName:
+    Type: String
+    Description: Name of the model.
+
+  ModelPackageName:
+    Type: String
+    Description: The trained Model Package Name.
+    
+Resources:
+
+  Model:
+    Type: AWS::SageMaker::Model
+    Properties:
+      PrimaryContainer:
+        ModelPackageName: !Ref ModelPackageName
+      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/MLOps
+  
+  EndpointConfig:
+    Type: AWS::SageMaker::EndpointConfig
+    Properties:
+      ProductionVariants:
+      - ModelName: !GetAtt Model.ModelName
+        VariantName: AllTraffic
+        InitialVariantWeight: 1.0
+        ServerlessConfig:
+          MaxConcurrency: 20
+          MemorySizeInMB: 1024
+    DependsOn: Model
+
+  Endpoint:
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName: 
+        Fn::Join:
+          - "-"
+          - - Fn::ImportValue: MLOpsPipelineName
+            - "dev" 
+      EndpointConfigName: !GetAtt EndpointConfig.EndpointConfigName
+    DependsOn: EndpointConfig
+
+Outputs:
+  ModelName:
+    Description: "Registered Model"
+    Value: !GetAtt Model.ModelName
+    Export:
+      Name: RegisteredModel
+
+  EndpointName:
+    Description: "Endpoint Name"
+    Value: !GetAtt Endpoint.EndpointName
